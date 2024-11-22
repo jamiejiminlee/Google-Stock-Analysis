@@ -19,7 +19,11 @@ bibliography: references.bib
 #| message: false
 
 library(tidyverse)
-library(palmerpenguins)
+library(arrow)
+
+
+#### Load Cleaned Data ####
+price_analysis_data <- read_parquet(here::here("data/02-analysis_data/google_analysis_data.parquet"))
 ```
 
 
@@ -85,7 +89,6 @@ And also planes (@fig-planes). (You can change the height and width, but don't w
 #| warning: false
 #| message: false
 
-analysis_data <- read_csv(here::here("data/02-analysis_data/analysis_data.csv"))
 
 analysis_data |> 
   ggplot(aes(x = width, y = length)) +
@@ -130,7 +133,17 @@ y_i|\mu_i, \sigma &\sim \mbox{Normal}(\mu_i, \sigma) \\
 \end{align}
 
 We run the model in R [@citeR] using the `rstanarm` package of @rstanarm. We use the default priors from `rstanarm`.
+```{r}
+#| echo: false
+#| eval: true
+#| warning: false
+#| message: false
 
+library(xgboost)
+
+google_xgb_model <-
+  readRDS(file = here::here("models/google_model.rds"))
+```
 
 ### Model justification
 
@@ -138,22 +151,159 @@ We expect a positive relationship between the size of the wings and time spent a
 
 We can use maths by including latex between dollar signs, for instance $\theta$.
 
+### Model Evaluation
+```{r}
+
+
+# Define future dates for Q1 2025
+future_dates <- seq.Date(as.Date("2025-01-01"), as.Date("2025-03-31"), by = "day")
+
+# Initialize future data based on the last row of training data
+last_row_of_train_data <- model_data %>% tail(1)
+current_features <- last_row_of_train_data %>%
+  select(Price_Lag1, Weekly_Avg_Close, Monthly_Avg_Close, Volatility, volume, date_numeric)
+
+# Initialize predicted prices for Q1 2025
+predicted_prices <- data.frame(
+  date = future_dates,
+  Predicted_Close = NA
+)
+
+# Ensure feature names match between current_features and trained model
+trained_feature_names <- xgb_model$feature_names # Features used during training
+
+# Initialize current_features with missing feature and match column order
+current_features <- last_row_of_train_data %>%
+  mutate(
+    Price_Change_Percent = 0 # Add missing feature with a default value
+  ) %>%
+  select(all_of(trained_feature_names)) # Ensure column order matches training data
+
+# Loop for dynamic predictions
+for (i in seq_along(predicted_prices$date)) {
+  # Ensure current_features matches model feature names
+  current_features_matrix <- current_features %>%
+    select(all_of(trained_feature_names)) %>% # Match feature names and order
+    as.matrix() # Convert to matrix for XGBoost
+  
+  # Predict the stock price for the current day
+  predicted_price <- predict(xgb_model, newdata = current_features_matrix)
+  
+  # Store the predicted price
+  predicted_prices$Predicted_Close[i] <- predicted_price
+  
+  # Dynamically update features
+  current_features <- data.frame(
+    Price_Lag1 = predicted_price,
+    Weekly_Avg_Close = if (i >= 7) {
+      mean(predicted_prices$Predicted_Close[(i - 6):i], na.rm = TRUE)
+    } else {
+      current_features$Weekly_Avg_Close
+    },
+    Monthly_Avg_Close = if (i >= 30) {
+      mean(predicted_prices$Predicted_Close[(i - 29):i], na.rm = TRUE)
+    } else {
+      current_features$Monthly_Avg_Close
+    },
+    Volatility = current_features$Volatility, # Assuming volatility is static
+    volume = current_features$volume, # Keep volume constant
+    date_numeric = as.numeric(predicted_prices$date[i]), # Update date
+    Price_Change_Percent = ifelse(
+      !is.na(current_features$Price_Lag1) & current_features$Price_Lag1 != 0,
+      ((current_features$Price_Lag1 - predicted_price) / current_features$Price_Lag1) * 100,
+      0
+    ) # Dynamically update Price_Change_Percent
+  )
+  
+  # Ensure current_features matches training features after updates
+  current_features <- current_features %>%
+    select(all_of(trained_feature_names)) # Match feature names and order
+}
+
+```
+
+
 
 # Results
 
-Our results are summarized in @tbl-modelresults.
+```{r}
+# Predicted Stock Price Trend for Q1 2025
+library(ggplot2)
+
+ggplot(predicted_prices, aes(x = date, y = Predicted_Close)) +
+  geom_line(color = "blue", size = 1) +
+  labs(
+    title = "Predicted Google Stock Prices for Q1 2025",
+    x = "Date",
+    y = "Predicted Stock Price"
+  ) +
+  theme_minimal()
+
+```
 
 ```{r}
-#| echo: false
-#| eval: true
-#| warning: false
-#| message: false
+# Comparison of Historical and Predicted Average Prices
+historical_avg <- mean(train_data$close, na.rm = TRUE)
+predicted_avg <- mean(predicted_prices$Predicted_Close, na.rm = TRUE)
 
-library(rstanarm)
+average_prices <- data.frame(
+  Period = c("Historical (2018–2023)", "Predicted (Q1 2025)"),
+  Average_Stock_Price = c(historical_avg, predicted_avg)
+)
 
-first_model <-
-  readRDS(file = here::here("models/first_model.rds"))
+ggplot(average_prices, aes(x = Period, y = Average_Stock_Price, fill = Period)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(
+    title = "Comparison of Historical and Predicted Average Prices",
+    x = "Period",
+    y = "Average Stock Price"
+  ) +
+  theme_minimal() +
+  scale_fill_manual(values = c("skyblue", "lightyellow"))
+
 ```
+
+```{r}
+# Predicted Volatility Distribution
+library(dplyr)
+
+predicted_volatility <- predicted_prices %>%
+  mutate(Daily_Change = Predicted_Close - lag(Predicted_Close)) %>%
+  drop_na()
+
+ggplot(predicted_volatility, aes(x = abs(Daily_Change))) +
+  geom_density(fill = "lightblue", alpha = 0.5) +
+  labs(
+    title = "Predicted Volatility Distribution for Q1 2025",
+    x = "Daily Price Change",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# Monthly Breakdown of Predicted Prices
+predicted_monthly <- predicted_prices %>%
+  mutate(Month = format(date, "%B")) %>%
+  group_by(Month) %>%
+  summarise(Average_Predicted_Price = mean(Predicted_Close, na.rm = TRUE)) %>%
+  arrange(match(Month, month.name)) # Ensure correct month order
+
+ggplot(predicted_monthly, aes(x = Month, y = Average_Predicted_Price, fill = Month)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(
+    title = "Monthly Breakdown of Predicted Stock Prices (Q1 2025)",
+    x = "Month",
+    y = "Average Predicted Price"
+  ) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1")
+
+```
+
+
+Our results are summarized in @tbl-modelresults.
 
 ```{r}
 #| echo: false
@@ -162,17 +312,76 @@ first_model <-
 #| tbl-cap: "Explanatory models of flight time based on wing width and wing length"
 #| warning: false
 
-modelsummary::modelsummary(
-  list(
-    "First model" = first_model
-  ),
-  statistic = "mad",
-  fmt = 2
+# Combine actual and predicted values for the test set
+test_results <- data.frame(
+  Date = test_data$date,
+  Actual = y_test,
+  Predicted = y_pred_test
 )
+
+# Line plot of actual vs. predicted values
+library(ggplot2)
+ggplot(test_results, aes(x = Date)) +
+  geom_line(aes(y = Actual, color = "Actual")) +
+  geom_line(aes(y = Predicted, color = "Predicted")) +
+  labs(
+    title = "Actual vs. Predicted Stock Prices on Test Data",
+    x = "Date",
+    y = "Stock Price",
+    color = "Legend"
+  ) +
+  theme_minimal()
+
 ```
 
 
 
+### Model Evaluation
+```{r}
+#| echo: false
+#| eval: true
+#| label: tbl-modelresults
+#| fig-cap: "Predicted Google Stock Prices for Q1 2025"
+#| warning: false
+
+# Line plot of predicted prices for Q1 2025
+ggplot(predicted_prices, aes(x = date, y = Predicted_Close)) +
+  geom_line(color = "blue") +
+  labs(
+    x = "Date",
+    y = "Predicted Stock Price"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+#| echo: false
+#| eval: true
+#| label: tbl-modelresults
+#| tbl-cap: "Comparison of Historical and Predicted Average Prices"
+#| warning: false
+
+# Combine historical and predicted prices
+historical_avg <- data.frame(
+  Period = c("Historical (2018–2023)", "Predicted (Q1 2025)"),
+  Avg_Price = c(mean(train_data$close), mean(predicted_prices$Predicted_Close))
+)
+
+# Bar chart for comparison
+ggplot(historical_avg, aes(x = Period, y = Avg_Price, fill = Period)) +
+  geom_bar(stat = "identity") +
+  labs(
+    x = "Period",
+    y = "Average Stock Price"
+  ) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+
+```
+The bar chart in Figure X compares the historical average stock price of Google during the training period (2018–2023) with the model's predicted average stock price for Q1 2025. The historical average, represented by the green bar, reflects trends captured by the model based solely on training data, excluding 2024 to avoid data leakage and ensure a robust comparison. The predicted average for Q1 2025, shown by the yellow bar, reveals a substantial increase in the forecasted stock price compared to historical trends.
+
+This separation between historical and predicted data highlights the model's ability to generalize future predictions based on patterns observed during the training period. Excluding 2024 ensures the integrity of the analysis by preventing overlap between evaluation data and training data, allowing a clear distinction between past performance and future expectations. The observed upward trend in the predicted prices suggests a potential growth trajectory for Google's stock in early 2025, reflecting either consistent upward momentum identified by the model in historical data or the influence of key predictors like recent price changes and volatility.
 
 # Discussion
 
@@ -201,53 +410,48 @@ Weaknesses and next steps should also be included.
 
 # Model details {#sec-model-details}
 
-## Posterior predictive check
+## Model Performance Metrics
 
-In @fig-ppcheckandposteriorvsprior-1 we implement a posterior predictive check. This shows...
-
-In @fig-ppcheckandposteriorvsprior-2 we compare the posterior with the prior. This shows... 
-
-```{r}
-#| eval: true
-#| echo: false
-#| message: false
-#| warning: false
-#| label: fig-ppcheckandposteriorvsprior
-#| layout-ncol: 2
-#| fig-cap: "Examining how the model fits, and is affected by, the data"
-#| fig-subcap: ["Posterior prediction check", "Comparing the posterior with the prior"]
-
-pp_check(first_model) +
-  theme_classic() +
-  theme(legend.position = "bottom")
-
-posterior_vs_prior(first_model) +
-  theme_minimal() +
-  scale_color_brewer(palette = "Set1") +
-  theme(legend.position = "bottom") +
-  coord_flip()
-```
-
-## Diagnostics
-
-@fig-stanareyouokay-1 is a trace plot. It shows... This suggests...
-
-@fig-stanareyouokay-2 is a Rhat plot. It shows... This suggests...
 
 ```{r}
 #| echo: false
 #| eval: true
-#| message: false
+#| label: tbl-modelresults
+#| tbl-cap: "Explanatory models of flight time based on wing width and wing length"
 #| warning: false
-#| label: fig-stanareyouokay
-#| fig-cap: "Checking the convergence of the MCMC algorithm"
-#| fig-subcap: ["Trace plot", "Rhat plot"]
-#| layout-ncol: 2
 
-plot(first_model, "trace")
+library(knitr)
 
-plot(first_model, "rhat")
+# Create a data frame for performance metrics
+performance_metrics <- data.frame(
+  Metric = c("RMSE", "MAE"),
+  Value = c(rmse_value, mae_value)
+)
+
+# Display the table
+kable(performance_metrics, caption = "Model Performance Metrics on Test Data")
+
 ```
+
+## Model Features
+```{r}
+#| echo: false
+#| eval: true
+#| label: fig-modelfeatues
+#| tbl-cap: "Feature Importance"
+#| warning: false
+
+# Bar plot of feature importance
+xgb.plot.importance(
+  importance_matrix,
+  main = "Feature Importance",
+  rel_to_first = TRUE,
+  top_n = 10
+)
+
+```
+
+
 
 
 

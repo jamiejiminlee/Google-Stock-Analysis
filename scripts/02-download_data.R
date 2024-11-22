@@ -8,19 +8,29 @@
 # Any other information needed? [...UPDATE THIS...]
 
 
-#### Workspace setup ####
-library(opendatatoronto)
+
+#### Workspace Setup ####
+library(tidyquant)
 library(tidyverse)
-# [...UPDATE THIS...]
+library(xgboost)
+library(arrow)
 
-#### Download data ####
-# [...ADD CODE HERE TO DOWNLOAD...]
+#### Define Parameters ####
+# Define the stock symbol for Google
+stock <- "GOOG"  # Google
+
+# Define the date range
+start_date <- "2018-01-01"
+end_date <- "2024-12-31"
+
+#### Download Data ####
+# Fetch historical stock price data for Google
+raw_google_stock_data <- tq_get(stock, from = start_date, to = end_date, get = "stock.prices")
+
+#### Save Data ####
+write_csv(raw_google_stock_data, "data/01-raw_data/raw_google_data.csv")
 
 
 
-#### Save data ####
-# [...UPDATE THIS...]
-# change the_raw_data to whatever name you assigned when you downloaded it.
-write_csv(the_raw_data, "inputs/data/raw_data.csv") 
 
          

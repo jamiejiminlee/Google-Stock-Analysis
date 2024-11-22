@@ -7,38 +7,51 @@
 # Pre-requisites: [...UPDATE THIS...]
 # Any other information needed? [...UPDATE THIS...]
 
-#### Workspace setup ####
+#### Workspace Setup ####
 library(tidyverse)
+library(lubridate)
+library(zoo)
+library(arrow)
 
-#### Clean data ####
-raw_data <- read_csv("inputs/data/plane_data.csv")
+#### Load Raw Data ####
+raw_google_stock_data <- read_csv("data/01-raw_data/raw_google_data.csv")
 
-cleaned_data <-
-  raw_data |>
-  janitor::clean_names() |>
-  select(wing_width_mm, wing_length_mm, flying_time_sec_first_timer) |>
-  filter(wing_width_mm != "caw") |>
+#### Data Cleaning ####
+price_analysis_data <- raw_google_stock_data %>%
   mutate(
-    flying_time_sec_first_timer = if_else(flying_time_sec_first_timer == "1,35",
-                                   "1.35",
-                                   flying_time_sec_first_timer)
-  ) |>
-  mutate(wing_width_mm = if_else(wing_width_mm == "490",
-                                 "49",
-                                 wing_width_mm)) |>
-  mutate(wing_width_mm = if_else(wing_width_mm == "6",
-                                 "60",
-                                 wing_width_mm)) |>
-  mutate(
-    wing_width_mm = as.numeric(wing_width_mm),
-    wing_length_mm = as.numeric(wing_length_mm),
-    flying_time_sec_first_timer = as.numeric(flying_time_sec_first_timer)
-  ) |>
-  rename(flying_time = flying_time_sec_first_timer,
-         width = wing_width_mm,
-         length = wing_length_mm
-         ) |> 
-  tidyr::drop_na()
+    # Convert date to Date type
+    date = as.Date(date),
+    
+    # Create lagged closing price
+    Price_Lag1 = lag(close),
+    
+    # Calculate daily price difference
+    Price_Diff = close - Price_Lag1,
+    
+    # Calculate daily percentage change in price
+    Price_Change_Percent = if_else(
+      !is.na(Price_Lag1) & Price_Lag1 != 0,
+      (Price_Diff / Price_Lag1) * 100,
+      NA_real_
+    ),
+    
+    # Calculate 7-day rolling average of close price
+    Weekly_Avg_Close = rollmean(close, k = 7, fill = NA, align = "right"),
+    
+    # Calculate 30-day rolling average of close price
+    Monthly_Avg_Close = rollmean(close, k = 30, fill = NA, align = "right"),
+    
+    # Calculate 7-day rolling standard deviation (volatility)
+    Volatility = rollapply(close, width = 7, FUN = sd, fill = NA, align = "right")
+  ) %>%
+  # Retain only relevant columns
+  select(
+    date, symbol, open, high, low, close, volume, adjusted, 
+    Price_Lag1, Price_Change_Percent, Weekly_Avg_Close, Monthly_Avg_Close, Volatility
+  ) %>%
+  # Drop rows with NA values
+  drop_na()
 
-#### Save data ####
-write_csv(cleaned_data, "outputs/data/analysis_data.csv")
+#### Save Cleaned Data ####
+write_parquet(price_analysis_data, "data/02-analysis_data/google_analysis_data.parquet")
+
