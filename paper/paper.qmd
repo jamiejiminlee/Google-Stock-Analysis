@@ -46,71 +46,107 @@ Telegraphing paragraph: The remainder of this paper is structured as follows. @s
 
 # Data {#sec-data}
 
-## Overview
+## Data Overview
 
-We use the statistical programming language R [@citeR].... Our data [@shelter].... Following @tellingstories, we consider...
+The data for this paper, obtained from the Yahoo Finance API via the `tidyquant` library in R on November 19, 2024, includes historical stock price information for **Google (GOOG)**. This dataset spans from January 1, 2018, to December 31, 2024, and provides daily stock market data. Key variables include **`symbol`**, **`date`**, **`open`**, **`high`**, **`low`**, **`close`**, **`volume`**, and **`adjusted`** prices. Our analysis focuses on predicting the daily closing price (`close`) and examining patterns of price differences and percentage changes over time. To enhance the dataset’s predictive capabilities, we constructed additional features such as **`Price_Lag1`** (lagged closing prices), **`Price_Diff`** (daily price differences), **`Price_Change_Percent`** (percentage changes), and **`Volatility`** (rolling standard deviation). 
 
-Overview text
+To ensure reliability, the data was pre-processed to remove missing values and compute these derived features. Observations with incomplete data were excluded to maintain consistency. Data cleaning and analysis were conducted using the `tidyverse`, `lubridate`, and `arrow` libraries in R. Further details on data cleaning and preparation are provided in [Appendix -@sec-data-cleaning].
 
 ## Measurement
-	
-Some paragraphs about how we go from a phenomena in the world to an entry in the dataset.
 
-## Outcome variables
+Stock price data reflects market dynamics driven by a variety of factors, including economic conditions, corporate events, and investor sentiment. Raw variables such as **`open`**, **`high`**, **`low`**, and **`close`** prices represent snapshots of market behavior during each trading day. While precise, these variables often fail to capture intraday trends or the full complexity of trading activity.
 
-Add graphs, tables and text. Use sub-sub-headings for each outcome variable or update the subheading to be singular.
+Constructed variables such as **`Price_Diff`** and **`Price_Change_Percent`** quantify daily stock price movements, capturing day-to-day fluctuations. For example, **`Price_Diff`** measures absolute differences in closing prices between consecutive days, while **`Price_Change_Percent`** normalizes these changes relative to the previous day's price. These features allow for comparisons across periods and enhance the model’s ability to capture sequential trends. Additionally, rolling metrics like **`Volatility`** (7-day rolling standard deviation) and moving averages (**`Weekly_Avg_Close`**, **`Monthly_Avg_Close`**) provide insights into short- and long-term trends.
 
+The variable **`volume`**, representing the number of shares traded daily, serves as a proxy for market activity and investor interest. Temporal features derived from **`date`**, such as day-of-week and month, capture seasonal or cyclical trading patterns. While these variables collectively provide a structured framework for analysis, their limitations must be acknowledged, such as potential oversimplifications of market behavior or the inability to account for external shocks.
 
+## Variables
 
-Some of our data is of penguins (@fig-bills), from @palmerpenguins.
+The dataset includes the following original and constructed variables relevant to the analysis of stock price patterns:
+**Original Variables**:
 
+- **`symbol`**: The stock ticker symbol, identifying the company (e.g., GOOG for Google).
+- **`date`**: The trading date, essential for tracking time-based patterns.
+- **`open`**: The stock’s opening price on a given day, indicating initial market sentiment.
+- **`high`**: The highest price during the trading day, capturing upward volatility.
+- **`low`**: The lowest price during the trading day, capturing downward volatility.
+- **`close`**: The stock’s closing price, used as the primary outcome variable in the model.
+- **`volume`**: Total shares traded, reflecting market activity and investor interest.
+- **`adjusted`**: The closing price adjusted for corporate actions like splits or dividends, providing a normalized measure of value.
+
+**Constructed Variables**:
+
+- **`Price_Lag1`**: The closing price from the previous trading day, derived using `lag()`. This variable captures momentum and sequential trends in stock prices.
+- **`Price_Diff`**: The difference between the current day’s closing price and the previous day’s, calculated as:
+  $$
+  \text{Price_Diff} = \text{close} - \text{Price_Lag1}
+  $$
+  This variable quantifies absolute daily price fluctuations.
+
+- **`Price_Change_Percent`**: The percentage change in stock price relative to the previous day, calculated as:
+  $$
+  \text{Price_Change_Percent} = \frac{\text{close} - \text{Price_Lag1}}{\text{Price_Lag1}} \times 100
+  $$
+  This metric normalizes price changes, allowing for meaningful comparisons across time.
+
+- **`Weekly_Avg_Close`**: A 7-day moving average of the closing price, constructed using `rollmean()`. This metric smooths short-term fluctuations to highlight weekly trends.
+
+- **`Monthly_Avg_Close`**: A 30-day moving average of the closing price, capturing longer-term trends.
+
+- **`Volatility`**: The 7-day rolling standard deviation of closing prices, computed using `rollapply()`. This variable measures short-term price variability, reflecting market stability or instability.
+
+These variables provide a robust foundation for analyzing and predicting stock price behavior. They capture both raw market indicators and constructed metrics that reflect trends, volatility, and momentum.
+
+### Outcome Variable
+
+The outcome variable for this analysis is the **daily closing price (`close`)**, which serves as a standard measure of stock performance. The model aims to predict this variable using historical data and derived features.
 ```{r}
-#| label: fig-bills
-#| fig-cap: Bills of penguins
-#| echo: false
+# Load necessary libraries
+library(ggplot2)
 
-ggplot(penguins, aes(x = island, fill = species)) +
-  geom_bar(alpha = 0.8) +
-  scale_fill_manual(values = c("darkorange","purple","cyan4"),
-                    guide = "none") +
-  theme_minimal() +
-  facet_wrap(~species, ncol = 1) +
-  coord_flip()
+# Create a histogram to visualize the distribution of the closing price
+ggplot(price_analysis_data, aes(x = close)) +
+  geom_histogram(
+    bins = 30, 
+    fill = "blue", 
+    alpha = 0.7, 
+    color = "black"
+  ) +
+  labs(
+    title = "Distribution of Daily Closing Price",
+    x = "Closing Price (USD)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
 ```
 
-Talk more about it.
+### Predictor Variables
 
-And also planes (@fig-planes). (You can change the height and width, but don't worry about doing that until you have finished every other aspect of the paper - Quarto will try to make it look nice and the defaults usually work well once you have enough text.)
+To forecast the daily closing price (`close`), the model employs a comprehensive set of predictors derived from the cleaned dataset:
+
+- **`Price_Lag1`**: The previous day’s closing price, capturing recent trends in stock movement.
+- **`Price_Change_Percent`**: The proportional change in stock price compared to the previous day, normalizing variations across time.
+- **`Weekly_Avg_Close`**: A smoothed metric of weekly price trends, reducing the impact of short-term volatility.
+- **`Monthly_Avg_Close`**: A broader measure of stock performance, capturing monthly trends.
+- **`Volatility`**: A measure of short-term variability, highlighting the extent of daily price fluctuations.
+- **`volume`**: Daily trading activity, which often correlates with significant price movements.
+- **`open`**, **`high`**, **`low`**: Intraday price metrics that reflect trading behavior throughout the day.
+
+By leveraging these variables, the analysis captures temporal patterns, market activity, and volatility, providing a comprehensive framework for predicting daily stock price movements.
 
 ```{r}
-#| label: fig-planes
-#| fig-cap: Relationship between wing length and width
-#| echo: false
-#| warning: false
-#| message: false
+# Select relevant variables, sample 5 random rows, and round to 2 decimal places
+sampled_data <- price_analysis_data %>%
+  select(
+    Price_Lag1, Price_Change_Percent, Weekly_Avg_Close, 
+    Monthly_Avg_Close, Volatility, volume, open, high, low
+  ) %>%
+  sample_n(5) %>%
+  mutate(across(everything(), ~ round(.x, 2)))
 
-
-analysis_data |> 
-  ggplot(aes(x = width, y = length)) +
-  geom_point(alpha = 0.8) +
-  theme_minimal() +
-  labs(x = "Wing width (mm)",
-       y = "Wing length (mm)")
+# Display the sampled rows as a table
+kable(sampled_data, caption = "Sample of Predictors for Daily Closing Price")
 ```
-
-Talk way more about it. 
-
-## Predictor variables
-
-Add graphs, tables and text.
-
-Use sub-sub-headings for each outcome variable and feel free to combine a few into one if they go together naturally.
-
-
-
-
-
-
 
 
 # Model
@@ -225,7 +261,8 @@ for (i in seq_along(predicted_prices$date)) {
 
 
 # Results
-
+## Predicted Google Stock Prices for Q1 2025
+This visualization presents the day-by-day predicted stock prices for Google in Q1 2025. The predictions show notable volatility in January, followed by a stabilization trend through February and March. These fluctuations in January suggest that the model anticipates a higher degree of uncertainty during this period. However, the leveling off in February and March indicates greater price consistency as the quarter progresses. This trend reflects how market patterns might stabilize over time, emphasizing the model’s ability to project temporal changes in volatility.
 ```{r}
 # Predicted Stock Price Trend for Q1 2025
 library(ggplot2)
@@ -240,7 +277,31 @@ ggplot(predicted_prices, aes(x = date, y = Predicted_Close)) +
   theme_minimal()
 
 ```
+## Weekly Predicted Stock Price Trends (Q1 2025)
+```{r}
+predicted_weekly <- predicted_prices %>%
+  mutate(Week = floor_date(date, "week")) %>%
+  group_by(Week) %>%
+  summarize(Average_Price = mean(Predicted_Close))
 
+ggplot(predicted_weekly, aes(x = Week, y = Average_Price)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "Weekly Predicted Stock Price Trends (Q1 2025)",
+    x = "Week",
+    y = "Average Predicted Price"
+  ) +
+  scale_x_date(
+    date_labels = "%b %d",  # Format: Month Day (e.g., Jan 01)
+    date_breaks = "1 week"  # Show a tick for each week
+  ) +
+  theme_minimal()
+
+
+```
+
+## Comparison of Historical and Predicted Average Prices
+The bar chart compares the average Google stock price from the historical period (2018–2023) to the predicted average for Q1 2025. The predicted average stock price for Q1 2025 is significantly higher than the historical average, suggesting a potential upward trajectory in Google’s stock performance. This result underscores the model's expectation of positive growth in the stock price, likely influenced by broader market trends or anticipated company performance improvements.
 ```{r}
 # Comparison of Historical and Predicted Average Prices
 historical_avg <- mean(train_data$close, na.rm = TRUE)
@@ -262,7 +323,8 @@ ggplot(average_prices, aes(x = Period, y = Average_Stock_Price, fill = Period)) 
   scale_fill_manual(values = c("skyblue", "lightyellow"))
 
 ```
-
+## Predicted Volatility Distribution for Q1 2025
+This density plot illustrates the distribution of daily price changes predicted for Q1 2025. The presence of two peaks suggests a bimodal distribution of price changes, indicating two distinct regimes of price movement—one with minor fluctuations and another with moderate changes. This bimodal nature could represent periods of relative market stability interspersed with higher activity, providing deeper insights into the behavior of the stock price over the forecasted period.
 ```{r}
 # Predicted Volatility Distribution
 library(dplyr)
@@ -282,6 +344,8 @@ ggplot(predicted_volatility, aes(x = abs(Daily_Change))) +
 
 ```
 
+## Monthly Breakdown of Predicted Stock Prices (Q1 2025)
+The bar chart provides a monthly breakdown of the predicted average stock prices for January, February, and March 2025. The nearly uniform heights of the bars indicate consistency in average prices across the months. This stability aligns with the trends observed in the day-by-day predictions, reinforcing the model's expectation of reduced volatility after January. The monthly breakdown helps interpret the overall trend on a finer scale, ensuring a comprehensive understanding of stock performance over time.
 ```{r}
 # Monthly Breakdown of Predicted Prices
 predicted_monthly <- predicted_prices %>%
@@ -301,6 +365,74 @@ ggplot(predicted_monthly, aes(x = Month, y = Average_Predicted_Price, fill = Mon
   scale_fill_brewer(palette = "Pastel1")
 
 ```
+
+## Alternate Results
+```{r}
+ggplot(predicted_prices, aes(x = date, y = Predicted_Close)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "Predicted Google Stock Prices for Q1 2025",
+    x = "Date",
+    y = "Predicted Stock Price"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+predicted_weekly <- predicted_prices %>%
+  mutate(Week = floor_date(date, "week")) %>%
+  group_by(Week) %>%
+  summarize(Average_Price = mean(Predicted_Close))
+
+ggplot(predicted_weekly, aes(x = Week, y = Average_Price)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "Weekly Predicted Stock Price Trends (Q1 2025)",
+    x = "Week",
+    y = "Average Predicted Price"
+  ) +
+  scale_x_date(
+    date_labels = "%b %d",  # Format: Month Day (e.g., Jan 01)
+    date_breaks = "1 week"  # Show a tick for each week
+  ) +
+  theme_minimal()
+
+
+```
+```{r}
+predicted_monthly <- predicted_prices %>%
+  mutate(Month = month(date, label = TRUE)) %>%
+  group_by(Month) %>%
+  summarize(Average_Price = mean(Predicted_Close))
+
+ggplot(predicted_monthly, aes(x = Month, y = Average_Price, fill = Month)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Monthly Breakdown of Predicted Stock Prices (Q1 2025)",
+    x = "Month",
+    y = "Average Predicted Price"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+predicted_prices <- predicted_prices %>%
+  mutate(Daily_Change = abs(Predicted_Close - lag(Predicted_Close, default = first(Predicted_Close))))
+
+ggplot(predicted_prices, aes(x = Daily_Change)) +
+  geom_density(fill = "lightblue", alpha = 0.5) +
+  labs(
+    title = "Predicted Volatility Distribution for Q1 2025",
+    x = "Daily Price Change",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+```
+
 
 
 Our results are summarized in @tbl-modelresults.
